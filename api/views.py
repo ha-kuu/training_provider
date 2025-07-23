@@ -16,24 +16,25 @@ class UserViewSets(viewsets.ViewSet):
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        return serializers.ValidationError({'Something missing.'})
+        raise serializers.ValidationError('Data not valid.')
 
     def list(self, request):
         #permission_classes = [IsAuthenticated]
         user_header = request.user
         user_exist = check_user_exist_in_company(user_header)
+        user_list = []
         if user_exist:
-            company = user_exist.company.pk
-            list_user = UserCompany.objects.filter(company = company)
-            for user in list_user:
-                return
-            serializer = UserSerializer(list_user, many=True)
+            company = UserCompany.objects.get(user = user_header.pk).company
+            list_user_in_company = UserCompany.objects.filter(company = company).select_related('user')
+            for user_obj in list_user_in_company:
+                user_list.append(user_obj.user)
+            serializer = UserSerializer(user_list, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
         raise serializers.ValidationError('No users.')
 
     def retrieve(self, request, pk):
         user_header = request.user
-        if user_header == pk:
+        if user_header.pk == int(pk):
             user = User.objects.get(pk = pk)
             serializer = UserSerializer(user)
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -43,18 +44,13 @@ class UserViewSets(viewsets.ViewSet):
         #will be use
         return
 
-def get_company_instance(user):
-    company = Company.objects.get()
-    return
-
 # Create your views here.
 class CourseBundleViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     def create(self, request):
         data = request.data.copy()
         user_header = request.user
-        user_exist = check_user_superuser(user_header)
-        if user_exist:
+        if user_header.is_superuser:
             course_price = data['price']
             data['user'] = user_header
             bundle_price_object = {}
@@ -75,14 +71,14 @@ class CourseBundleViewSets(viewsets.ViewSet):
     def list(self, request):
         list_course_bundle = CourseBundle.objects.filter(is_active =True)
         for single_course_price in list_course_bundle:
-            bundle_price = BundlePrice.objects.filter(courseBundle =single_course_price.id).order_by('-dateTime').values('price').first()
+            bundle_price = BundlePrice.objects.filter(courseBundle = single_course_price.id).order_by('-dateTime').values('price').first()
             single_course_price.price = bundle_price['price']
         serializer = CourseBundleAndPrice(list_course_bundle, many = True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def retrieve(self, request, pk):
-        user = check_user_superuser()
-        if user:
+        user_header = request.user
+        if user_header.is_superuser:
             course_bundle = CourseBundle.objects.get(pk = pk)
             serializer = CourseBundleSerializer(course_bundle)
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -92,50 +88,51 @@ class CourseBundleViewSets(viewsets.ViewSet):
         #is only for is_active
         return
 
-def check_company_course_count():
-    return
-
 class CompanyViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     def create(self, request):
         data = request.data.copy()
+        name = data['name']
+        check_company_name(name)
         user_header = request.user
         user_exist = check_user_exist_in_company(user_header)
-        if user_exist:
-            data['user'] = user_header
+        if not user_exist:
             company_serializer = CompanySerializer(data=data)
             if company_serializer.is_valid():
                 company_instance = company_serializer.save()
                 user_company_obj = {
-                    "user" : user_header,
-                    "company" : company_instance.instance.pk
+                    "user" : user_header.pk,
+                    "company" : company_instance.pk
                 }
                 user_company_serializer = UserCompanySerializer(data=user_company_obj)
                 if user_company_serializer.is_valid():
-                    user_company_serializer.save
+                    user_company_serializer.save()
                     return Response({'Success.'}, status=status.HTTP_200_OK)
-                raise serializers.ValidationError('Something missing.')
-            return serializers.ValidationError({'Something missing.'})
-        else: raise serializers.ValidationError('Not authorized.')
+                raise serializers.ValidationError(user_company_serializer.errors)
+            raise serializers.ValidationError(company_serializer.errors)
+        else: raise serializers.ValidationError('Already in a company.')
 
     def list(self, request):
-        return
+        user_header = request.user
+        user_exist = check_user_exist_in_company(user_header)
+        if user_exist:
+            company = get_company_instance_through_user_company(user_header)
+            serializer = CompanySerializer(company)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        else: raise serializers.ValidationError('No company.')
 
     def retrieve(self, request, pk):
         user_header = request.user
         user_exist = check_user_exist_in_company(user_header)
         if user_exist:
-            company = get_company_instance_through_user_company()
+            company = get_company_instance_through_user_company(user_header)
             serializer = CompanySerializer(company)
             return Response(serializer.data, status=status.HTTP_200_OK)
-        raise serializers.ValidationError('No company.')
+        else: raise serializers.ValidationError('No company.')
 
     def update(self, request, pk):
         #only for bank acct
         return
-
-def get_company_instance_through_user_company(user):
-    return UserCompany.objects.get(user = user).company
 
 class UserCompanyViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
@@ -146,7 +143,7 @@ class UserCompanyViewSets(viewsets.ViewSet):
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        return serializers.ValidationError({'Something missing.'})
+        raise serializers.ValidationError({'Something missing.'})
 
     def list(self, request):
         return
@@ -161,22 +158,34 @@ class UserCompanyViewSets(viewsets.ViewSet):
 class CourseViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     def create(self, request):
-        data = request.data
-
+        data = request.data.copy()
+        user_header = request.user
+        company = get_company_instance_through_user_company(user_header)
+        company_course_count = get_course_count_through_company_course_bundle(company)
+        if company_course_count == None:
+            raise serializers.ValidationError('Company have not bought any subscriptions.')
+        current_course_count = get_last_course_count_through_latest_course(company)
+        if company_course_count >= current_course_count :
+            raise serializers.ValidationError('Max count reached.')
+        data['courseCount'] = current_course_count + 1
         serializer = CourseSerializer(data=data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        return serializers.ValidationError({'Something missing.'})
+        raise serializers.ValidationError({'Something missing.'})
 
     def list(self, request):
         user_header = request.user
-        user_exist = check_user_exist_in_company()
+        user_exist = check_user_exist_in_company(user_header)
         if user_exist:
-            company = UserCompany.objects.get(user = user_header).company.pk
-            courses = list_course_for_company_only_courses(company)
+            try:
+                company = UserCompany.objects.get(user = user_header).company.pk
+                courses = list_course_for_company_only_courses(company)
+            except: raise serializers.ValidationError({'Something missing.'})
         else: 
-            courses = list_course_available()
+            try:
+                courses = list_course_available()
+            except: raise serializers.ValidationError({'Something missing.'})
         serializer = CourseSerializer(data=courses, many = True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
@@ -186,6 +195,11 @@ class CourseViewSets(viewsets.ViewSet):
     
     def update(self, request, pk):
         return
+
+def check_company_course_count(company_count, current_course_count):
+    if company_count >= current_course_count:
+        return True
+    return False
 
 def list_course_for_company_only_courses(company):
     try:
@@ -197,7 +211,9 @@ def retrieve_for_company_include_student():
     return
 
 def list_course_available():
-    return Course.objects.filter(courseDateTime__gte = timezone.now())
+    try:
+        return Course.objects.filter(courseDateTime__gte = timezone.now())
+    except: raise serializers.ValidationError({'Something missing.'})
 
 class UserCourseViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
@@ -209,7 +225,7 @@ class UserCourseViewSets(viewsets.ViewSet):
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        return serializers.ValidationError({'Something missing.'})
+        raise serializers.ValidationError({'Something missing.'})
 
     def list(self, request):
         return
@@ -229,7 +245,7 @@ class BundlePriceViewSets(viewsets.ViewSet):
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        return serializers.ValidationError({'Something missing.'})
+        raise serializers.ValidationError({'Something missing.'})
 
     def list(self, request):
         return
@@ -243,13 +259,17 @@ class BundlePriceViewSets(viewsets.ViewSet):
 class CompanyCourseBundleViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     def create(self, request):
-        data = request.data
-
+        data = request.data.copy
+        user_header = request.user
+        company = get_company_instance_through_user_company(user_header)
+        company_course_count = get_course_count_through_company_course_bundle(company)
+        if company_course_count != None:
+            data['totalCourseAmount'] += company_course_count
         serializer = CompanyCourseBundleSerializer(data=data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        return serializers.ValidationError({'Something missing.'})
+        raise serializers.ValidationError({'Something missing.'})
 
     def list(self, request):
         return
@@ -267,26 +287,27 @@ def check_user_exist_in_company(user):
     except:
         return False
 
-def user_from_auth():
-    return
+def get_course_count_through_company_course_bundle(company):
+    try:
+        return CompanyCourseBundle.objects.filter(company = company).order_by('-dateTime').first().totalCourseAmount
+    except:
+        raise serializers.ValidationError('Company have not bought any subscription.')
 
-def user_from_body():
-    return
+def get_company_instance_through_user_company(user):
+    try:
+        return UserCompany.objects.get(user = user).company
+    except: raise serializers.ValidationError('User have no company.')
 
-def user_company():
-    return
+def get_last_course_count_through_latest_course(company):
+    try:
+        return Course.objects.filter(company=company).order_by('-courseDateTime').first().courseCount
+    except:
+        return 0
 
-def user_user_company():
-    return
-
-def user_detail():
-    return
-
-def get_user_instance_from_company_pk():
-    return
-
-def check_user_admin():
-    return
-
-def check_user_superuser(user):
-    return User.objects.get(user).is_superuser
+def check_company_name(name):
+    try:
+        company = Company.objects.get(name = name)
+    except:
+        company = None
+    if company !=  None:
+        raise serializers.ValidationError('Company name taken.')
