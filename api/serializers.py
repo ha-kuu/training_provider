@@ -105,7 +105,7 @@ class GetBundlePriceSerializer():
     class Meta:
         model = BundlePrice
 
-class List_Company_Courses_And_Students_For_Company_Serializer(serializers.ModelSerializer):
+class ListCompanyCoursesAndStudentsForCompanySerializer(serializers.ModelSerializer):
     students = serializers.SerializerMethodField()
 
     class Meta:
@@ -116,3 +116,19 @@ class List_Company_Courses_And_Students_For_Company_Serializer(serializers.Model
     def get_students(self, obj):
         user_courses = obj.user_course_course.all()
         return GetUserSerializer([uc.user for uc in user_courses], many=True).data
+    
+class GetCompanyInfoWithSubsCountAndCurrentCountSerializer(serializers.ModelSerializer):
+    totalSubscription = serializers.SerializerMethodField()
+    currentCount = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Company
+        fields = '__all__'
+
+    def get_totalSubscription(self,obj):
+        companySubs = obj.company_course_bundle_company.filter().latest('dateTime').totalCourseAmount
+        return companySubs
+
+    def get_currentCount(self, obj):
+        currentCount = obj.course_to_company.filter().latest('courseDateTime').courseCount
+        return currentCount

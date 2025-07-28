@@ -137,7 +137,7 @@ AUTH_PASSWORD_VALIDATORS = [
 SPECTACULAR_SETTINGS = {
     'TITLE': 'One Stop Training Provider',
     'DESCRIPTION': 'This is my personal project.',
-    'VERSION': '1.0.0',
+    'VERSION': '0.9.1',
 }
 
 # Internationalization

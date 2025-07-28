@@ -7,14 +7,22 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction as db_transaction
 from .serializers import *
-from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, OpenApiRequest
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.pagination import LimitOffsetPagination
-
+from .swagger_text import *
+from .drf_spec_open_api import *
+from .drf_spec_msg_serializer import *
 
 class UserViewSets(viewsets.ViewSet):
     @extend_schema(
-            request=PostUserSerializer
+            description=dsoa_post_user['description'],
+            parameters=None,
+            request= PostUserSerializer,
+            responses={
+                200:UserSerializer,
+                400:OpenApiResponse(description="Data not valid.")
+            }
     )
     def create(self, request):
         data = request.data.copy()
@@ -26,7 +34,12 @@ class UserViewSets(viewsets.ViewSet):
         raise serializers.ValidationError('Data not valid.')
 
     @extend_schema(
-        responses=GetUserSerializer(many=True)
+            description=dsoa_list_user['description'],
+            responses={
+                200:GetUserSerializer(many=True),
+                400:OpenApiResponse(description='Authentication credentials were not provided.'),
+                401:OpenApiResponse(description='Not authorized.')
+            }
     )
     def list(self, request):
         #permission_classes = [IsAuthenticated]
@@ -40,10 +53,15 @@ class UserViewSets(viewsets.ViewSet):
                 user_list.append(user_obj.user)
             serializer = GetUserSerializer(user_list, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
-        raise serializers.ValidationError('No users.')
+        raise serializers.ValidationError('Not authorized')
 
     @extend_schema(
-        responses={200:GetUserSerializer}
+            description=dsoa_retrieve_user['description'],
+            responses={
+                200:GetUserSerializer,
+                400:OpenApiResponse(description='Not authorized.'),
+                401:OpenApiResponse(description='Authentication credentials were not provided.'),
+            }
     )
     def retrieve(self, request, pk):
         user_header = request.user
@@ -54,13 +72,14 @@ class UserViewSets(viewsets.ViewSet):
         raise serializers.ValidationError('Not authorized.')
 
     @extend_schema(
+            exclude=True,
             request=PutUserSerializer
     )
     def update(self, request, pk):
         #will be use
         return
 
-# Create your views here.
+@extend_schema(exclude=True)
 class CourseBundleViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     def create(self, request):
@@ -81,7 +100,6 @@ class CourseBundleViewSets(viewsets.ViewSet):
                     bundle_price_serializer.save()
                     return Response({'Response: Successful.'}, status=status.HTTP_200_OK)
                 else: raise serializers.ValidationError('Few data missing.')
-        
         else: raise serializers.ValidationError('Not authorized.')
 
     def list(self, request):
@@ -100,12 +118,26 @@ class CourseBundleViewSets(viewsets.ViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         raise serializers.ValidationError('Not authorized.')
 
+    @extend_schema(
+            exclude=True
+    )
     def update(self, request, pk):
         #is only for is_active
         return
 
 class CompanyViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+            description=dsoa_post_company['description'],
+            parameters=None,
+            request=CompanySerializer,
+            responses={
+                200:OpenApiResponse(description='Success.'),
+                400:OpenApiResponse(description='Authentication credentials were not provided.'),
+                401:OpenApiResponse(description='Not authorized.')
+            }
+    )
     def create(self, request):
         data = request.data.copy()
         name = data['name']
@@ -128,28 +160,38 @@ class CompanyViewSets(viewsets.ViewSet):
             raise serializers.ValidationError(company_serializer.errors)
         else: raise serializers.ValidationError('Already in a company.')
 
+    @extend_schema(
+            description=dsoa_list_company['description'],
+            responses={
+                200:GetCompanyInfoWithSubsCountAndCurrentCountSerializer,
+                400:OpenApiResponse(description='No company.')
+                }
+    )
     def list(self, request):
         user_header = request.user
         user_exist = check_user_exist_in_company(user_header)
         if user_exist:
             company = get_company_instance_through_user_company(user_header)
-            serializer = CompanySerializer(company)
+            serializer = GetCompanyInfoWithSubsCountAndCurrentCountSerializer(company)
             return Response(serializer.data, status=status.HTTP_200_OK)
         else: raise serializers.ValidationError('No company.')
 
+    @extend_schema(exclude=True)
     def retrieve(self, request, pk):
         user_header = request.user
         user_exist = check_user_exist_in_company(user_header)
         if user_exist:
             company = get_company_instance_through_user_company(user_header)
-            serializer = CompanySerializer(company)
+            serializer = GetCompanyInfoWithSubsCountAndCurrentCountSerializer(company)
             return Response(serializer.data, status=status.HTTP_200_OK)
         else: raise serializers.ValidationError('No company.')
 
+    @extend_schema(exclude=True)
     def update(self, request, pk):
         #only for bank acct
         return
 
+@extend_schema(exclude=True)
 class UserCompanyViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     def create(self, request):
@@ -159,28 +201,24 @@ class UserCompanyViewSets(viewsets.ViewSet):
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        raise serializers.ValidationError({'Something missing.'})
-
-    def list(self, request):
-        return
-    
-    def retrieve(self, request, pk):
-        return
-    
-    def update(self, request, pk):
-        return
-    
+        raise serializers.ValidationError(serializer.errors)
 
 class CourseViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     @extend_schema(
-            request=CourseSerializer
+            request=CourseSerializer,
+            responses={
+                200:CourseSerializer,
+                400:OpenApiResponse(description='Not authorized.'),
+                401:OpenApiResponse(description='Authentication credentials were not provided.'),
+            }
     )
     def create(self, request):
         data = request.data.copy()
         user_header = request.user
         company = get_company_instance_through_user_company(user_header)
         company_course_count = get_course_count_through_company_course_bundle(company)
+        if data['price'] < 1: return serializers.ValidationError('Price cant be lower than Rm1.')
         data['company'] = company.pk
         if company_course_count == None:
             raise serializers.ValidationError('Company have not bought any subscriptions.')
@@ -194,12 +232,17 @@ class CourseViewSets(viewsets.ViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         raise serializers.ValidationError(serializer.errors)
 
-    @extend_schema(    
+    @extend_schema(
+            request=CourseSerializer,
             parameters=[
                 OpenApiParameter(name='limit', type=int, location=OpenApiParameter.QUERY, description='Number of items per page'),
                 OpenApiParameter(name='offset', type=int, location=OpenApiParameter.QUERY, description='Starting index of results'),
     ],
-            responses=List_Company_Courses_And_Students_For_Company_Serializer
+            responses={
+                200:ListCompanyCoursesAndStudentsForCompanySerializer,
+                400:OpenApiResponse(description='Not authorized.'),
+                401:OpenApiResponse(description='Authentication credentials were not provided.'),
+            },
     )
     def list(self, request):
         user_header = request.user
@@ -213,18 +256,23 @@ class CourseViewSets(viewsets.ViewSet):
         paginated_qs = paginator.paginate_queryset(courses, request)
 
         # Serialize
-        serializer = List_Company_Courses_And_Students_For_Company_Serializer(
+        serializer = ListCompanyCoursesAndStudentsForCompanySerializer(
             paginated_qs, many=True
         )
-
-        # ✅ Return paginated response (important for Swagger UI)
-        print(f"paginator count: {getattr(paginator, 'count', 'NO COUNT')}")
         return paginator.get_paginated_response(serializer.data)
-    
+
+    @extend_schema(
+            description=dsoa_retrieve_course['description'],
+            responses=CourseSerializer
+    )
     def retrieve(self, request, pk):
-        retrieve_for_company_include_student()
-        return
-    
+        course = Course.objects.get(pk = pk)
+        serializer = CourseSerializer(course)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+            exclude=True
+    )
     def update(self, request, pk):
         return
 
@@ -262,15 +310,7 @@ class UserCourseViewSets(viewsets.ViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         raise serializers.ValidationError(serializer.errors)
 
-    def list(self, request):
-        return
-    
-    def retrieve(self, request, pk):
-        return
-    
-    def update(self, request, pk):
-        return
-
+@extend_schema(exclude=True)
 class BundlePriceViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     def create(self, request):
@@ -282,17 +322,17 @@ class BundlePriceViewSets(viewsets.ViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         raise serializers.ValidationError({'Something missing.'})
 
-    def list(self, request):
-        return
-    
-    def retrieve(self, request, pk):
-        return
-    
-    def update(self, request, pk):
-        return
-
 class CompanyCourseBundleViewSets(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+            request=CompanyCourseBundleSerializer,
+            responses={
+                200:CompanyCourseBundleSerializer,
+                400:OpenApiResponse(description='Authentication credentials were not provided.'),
+                401:OpenApiResponse(description='Not authorized.')
+            }    
+    )
     def create(self, request):
         data = request.data.copy()
         user_header = request.user
@@ -310,13 +350,22 @@ class CompanyCourseBundleViewSets(viewsets.ViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         raise serializers.ValidationError(serializer.errors)
 
-    def list(self, request):
+    @extend_schema(
+            exclude=True
+    )
+    def list():
         return
-    
-    def retrieve(self, request, pk):
+
+    @extend_schema(
+            exclude=True
+    )
+    def retrieve():
         return
-    
-    def update(self, request, pk):
+
+    @extend_schema(
+            exclude=True
+    )
+    def update():
         return
 
 def check_user_exist_in_company(user):
